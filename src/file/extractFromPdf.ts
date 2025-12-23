@@ -1,4 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker?url';
+
+// 🔴 КРИТИЧНО: инициализация worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export async function extractFromPdf(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -10,30 +14,21 @@ export async function extractFromPdf(file: File): Promise<string> {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
 
-    // группируем элементы по строкам (Y-координата)
-    const lines: Record<string, string[]> = {};
+    const lines: Record<number, string[]> = {};
 
     content.items.forEach((item: any) => {
-      const y = Math.round(item.transform[5]); // вертикальная позиция
+      const y = Math.round(item.transform[5]);
       if (!lines[y]) lines[y] = [];
       lines[y].push(item.str);
     });
 
-    // сортируем строки сверху вниз
-    const sortedLines = Object.keys(lines)
+    Object.keys(lines)
       .map(Number)
-      .sort((a, b) => b - a);
-
-    for (const y of sortedLines) {
-      const line = lines[y]
-        .join(' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-
-      if (line) {
-        fullText += line + '\n';
-      }
-    }
+      .sort((a, b) => b - a)
+      .forEach(y => {
+        const line = lines[y].join(' ').replace(/\s+/g, ' ').trim();
+        if (line) fullText += line + '\n';
+      });
 
     fullText += '\n';
   }
