@@ -2,10 +2,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { extractFromPdf } from './extractFromPdf';
 import { extractFromTxt } from './extractFromTxt';
 
-// КРИТИЧНО: Настройка worker для production
-// Используем unpkg вместо cdnjs (более стабильный)
-pdfjsLib.GlobalWorkerOptions.workerSrc = 
-  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
+// КРИТИЧНО: Используем локальный worker из папки public
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 export async function extractText(file: File): Promise<string> {
   try {
@@ -35,3 +33,11 @@ export async function extractText(file: File): Promise<string> {
     throw new Error(`Не удалось обработать файл ${file.name}`);
   }
 }
+```
+
+### Шаг 3: Убедитесь, что файл попадет в Git
+
+Добавьте в `.gitignore` исключение (чтобы worker НЕ игнорировался):
+```
+# В .gitignore добавьте:
+!public/pdf.worker.min.mjs
