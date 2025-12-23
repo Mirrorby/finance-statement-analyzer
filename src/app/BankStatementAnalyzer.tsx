@@ -89,14 +89,23 @@ export default function BankStatementAnalyzer() {
       let aggregated: Transaction[] = [...transactions];
 
       for (const file of files) {
-        const text = await extractText(file);
-        const parsed = parse(text);
-
+        // 1. пробуем обычный text layer
+        let text = await extractText(file);
+        let parsed = parse(text);
+      
+        // 2. если транзакций нет И это PDF → пробуем OCR
+        if (!parsed.length && file.type === 'application/pdf') {
+          console.warn(`PDF ${file.name}: пробуем OCR fallback`);
+          const ocrText = await ocrFallback(file);
+          parsed = parse(ocrText);
+        }
+      
+        // 3. если всё равно пусто — пропускаем файл
         if (!parsed.length) {
-          console.warn(`Файл ${file.name} не дал транзакций`);
+          console.warn(`Файл ${file.name} не дал транзакций даже после OCR`);
           continue;
         }
-
+      
         aggregated = mergeTransactions(aggregated, parsed);
       }
 
