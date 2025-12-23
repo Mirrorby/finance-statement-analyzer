@@ -33,11 +33,3 @@ export async function extractText(file: File): Promise<string> {
     throw new Error(`Не удалось обработать файл ${file.name}`);
   }
 }
-```
-
-### Шаг 3: Убедитесь, что файл попадет в Git
-
-Добавьте в `.gitignore` исключение (чтобы worker НЕ игнорировался):
-```
-# В .gitignore добавьте:
-!public/pdf.worker.min.mjs
