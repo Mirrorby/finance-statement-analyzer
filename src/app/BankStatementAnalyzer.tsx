@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Upload,
   DollarSign,
@@ -6,13 +6,19 @@ import {
   TrendingDown,
   PieChart,
   FileText,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 
 import { extractText } from '../file/extractText';
 import { parse } from '../parsers';
 import { calculateAnalytics } from '../analytics/calculateAnalytics';
 import { Transaction } from '../types/transaction';
+import {
+  saveTransactions,
+  loadTransactions,
+  clearTransactions
+} from '../storage/db';
 
 export default function BankStatementAnalyzer() {
   const [fileName, setFileName] = useState<string | null>(null);
@@ -21,8 +27,29 @@ export default function BankStatementAnalyzer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ===== ЗАГРУЗКА ФАЙЛА =====
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  /* =========================
+     ЗАГРУЗКА ДАННЫХ ИЗ IndexedDB ПРИ СТАРТЕ
+     ========================= */
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await loadTransactions();
+        if (stored && stored.transactions.length > 0) {
+          setTransactions(stored.transactions);
+          setAnalytics(calculateAnalytics(stored.transactions));
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить данные из хранилища', e);
+      }
+    })();
+  }, []);
+
+  /* =========================
+     ОБРАБОТКА ЗАГРУЗКИ ФАЙЛА
+     ========================= */
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -35,14 +62,20 @@ export default function BankStatementAnalyzer() {
       const parsed = parse(text);
 
       if (!parsed.length) {
-        throw new Error('Не удалось распознать транзакции. Проверь формат выписки.');
+        throw new Error(
+          'Не удалось распознать транзакции. Проверь формат выписки.'
+        );
       }
 
       const analyticsResult = calculateAnalytics(parsed);
 
       setTransactions(parsed);
       setAnalytics(analyticsResult);
+
+      // 💾 сохраняем в IndexedDB
+      await saveTransactions(parsed);
     } catch (err: any) {
+      console.error(err);
       setError(err.message || 'Ошибка обработки файла');
       setTransactions([]);
       setAnalytics(null);
@@ -51,8 +84,12 @@ export default function BankStatementAnalyzer() {
     }
   };
 
-  // ===== ЭКСПОРТ CSV =====
+  /* =========================
+     ЭКСПОРТ CSV
+     ========================= */
   const exportToCSV = () => {
+    if (!transactions.length) return;
+
     const headers = [
       'Дата',
       'Категория',
@@ -73,22 +110,44 @@ export default function BankStatementAnalyzer() {
       t.bank
     ]);
 
-    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+    const csv = [headers, ...rows]
+      .map(row => row.join(','))
+      .join('\n');
+
     const blob = new Blob(['\ufeff' + csv], {
       type: 'text/csv;charset=utf-8;'
     });
 
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `transactions_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `transactions_${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
     link.click();
   };
 
-  // ===== UI =====
-  return (
-    <div style={{ minHeight: '100vh', background: '#eef2ff', padding: 24 }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+  /* =========================
+     ОЧИСТКА ДАННЫХ
+     ========================= */
+  const handleClear = async () => {
+    await clearTransactions();
+    setTransactions([]);
+    setAnalytics(null);
+    setFileName(null);
+  };
 
+  /* =========================
+     UI
+     ========================= */
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        background: '#eef2ff',
+        padding: 24
+      }}
+    >
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         {/* HEADER */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <h1 style={{ fontSize: 32, fontWeight: 700 }}>
@@ -103,26 +162,35 @@ export default function BankStatementAnalyzer() {
         </div>
 
         {/* UPLOAD */}
-        <div style={{
-          background: '#fff',
-          padding: 32,
-          borderRadius: 12,
-          boxShadow: '0 10px 20px rgba(0,0,0,0.05)',
-          marginBottom: 32
-        }}>
-          <label style={{
-            display: 'block',
-            border: '2px dashed #c7d2fe',
-            borderRadius: 12,
+        <div
+          style={{
+            background: '#fff',
             padding: 32,
-            textAlign: 'center',
-            cursor: 'pointer'
-          }}>
-            <Upload size={48} style={{ marginBottom: 12, color: '#6366f1' }} />
+            borderRadius: 12,
+            boxShadow: '0 10px 20px rgba(0,0,0,0.05)',
+            marginBottom: 32
+          }}
+        >
+          <label
+            style={{
+              display: 'block',
+              border: '2px dashed #c7d2fe',
+              borderRadius: 12,
+              padding: 32,
+              textAlign: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <Upload
+              size={48}
+              style={{ marginBottom: 12, color: '#6366f1' }}
+            />
             <div style={{ fontWeight: 600 }}>
               {fileName || 'Выберите файл выписки'}
             </div>
-            <div style={{ fontSize: 13, color: '#666', marginTop: 6 }}>
+            <div
+              style={{ fontSize: 13, color: '#666', marginTop: 6 }}
+            >
               Поддерживаются PDF и TXT
             </div>
             <input
@@ -140,13 +208,15 @@ export default function BankStatementAnalyzer() {
           )}
 
           {error && (
-            <div style={{
-              marginTop: 16,
-              padding: 12,
-              background: '#fee2e2',
-              color: '#991b1b',
-              borderRadius: 8
-            }}>
+            <div
+              style={{
+                marginTop: 16,
+                padding: 12,
+                background: '#fee2e2',
+                color: '#991b1b',
+                borderRadius: 8
+              }}
+            >
               {error}
             </div>
           )}
@@ -154,12 +224,15 @@ export default function BankStatementAnalyzer() {
 
         {/* ANALYTICS */}
         {analytics && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: 16,
-            marginBottom: 32
-          }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns:
+                'repeat(auto-fit, minmax(220px, 1fr))',
+              gap: 16,
+              marginBottom: 32
+            }}
+          >
             <StatCard
               title="Доходы"
               value={`+${analytics.totalIncome.toFixed(2)}`}
@@ -174,7 +247,9 @@ export default function BankStatementAnalyzer() {
             />
             <StatCard
               title="Баланс"
-              value={(analytics.balance >= 0 ? '+' : '') + analytics.balance.toFixed(2)}
+              value={`${analytics.balance >= 0 ? '+' : ''}${analytics.balance.toFixed(
+                2
+              )}`}
               color="#2563eb"
               icon={<DollarSign />}
             />
@@ -189,40 +264,50 @@ export default function BankStatementAnalyzer() {
 
         {/* TABLE */}
         {transactions.length > 0 && (
-          <div style={{
-            background: '#fff',
-            borderRadius: 12,
-            padding: 24,
-            boxShadow: '0 10px 20px rgba(0,0,0,0.05)'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: 16
-            }}>
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: 12,
+              padding: 24,
+              boxShadow: '0 10px 20px rgba(0,0,0,0.05)'
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16
+              }}
+            >
               <h2 style={{ fontSize: 20, fontWeight: 700 }}>
                 <FileText size={18} /> Транзакции ({transactions.length})
               </h2>
-              <button
-                onClick={exportToCSV}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: '#4f46e5',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '8px 14px',
-                  cursor: 'pointer'
-                }}
-              >
-                <Download size={16} /> CSV
-              </button>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={exportToCSV}
+                  style={buttonPrimary}
+                >
+                  <Download size={16} /> CSV
+                </button>
+
+                <button
+                  onClick={handleClear}
+                  style={buttonSecondary}
+                >
+                  <Trash2 size={16} /> Очистить
+                </button>
+              </div>
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse'
+                }}
+              >
                 <thead>
                   <tr style={{ background: '#f1f5f9' }}>
                     <Th>Дата</Th>
@@ -235,17 +320,35 @@ export default function BankStatementAnalyzer() {
                 </thead>
                 <tbody>
                   {transactions.map((t, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                    <tr
+                      key={i}
+                      style={{
+                        borderBottom:
+                          '1px solid #e5e7eb'
+                      }}
+                    >
                       <Td>{t.date.toLocaleString()}</Td>
                       <Td>{t.category}</Td>
                       <Td>{t.description}</Td>
-                      <Td align="right" style={{ color: '#16a34a' }}>
-                        {t.income ? `+${t.income.toFixed(2)}` : '—'}
+                      <Td
+                        align="right"
+                        style={{ color: '#16a34a' }}
+                      >
+                        {t.income
+                          ? `+${t.income.toFixed(2)}`
+                          : '—'}
                       </Td>
-                      <Td align="right" style={{ color: '#dc2626' }}>
-                        {t.expense ? `-${t.expense.toFixed(2)}` : '—'}
+                      <Td
+                        align="right"
+                        style={{ color: '#dc2626' }}
+                      >
+                        {t.expense
+                          ? `-${t.expense.toFixed(2)}`
+                          : '—'}
                       </Td>
-                      <Td align="right">{t.balance.toFixed(2)}</Td>
+                      <Td align="right">
+                        {t.balance.toFixed(2)}
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -253,31 +356,52 @@ export default function BankStatementAnalyzer() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
 }
 
-/* ===== МЕЛКИЕ КОМПОНЕНТЫ ===== */
+/* =========================
+   ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ
+   ========================= */
 
 function StatCard({
   title,
   value,
   color,
   icon
-}: any) {
+}: {
+  title: string;
+  value: string | number;
+  color: string;
+  icon: React.ReactNode;
+}) {
   return (
-    <div style={{
-      background: '#fff',
-      borderRadius: 12,
-      padding: 20,
-      boxShadow: '0 6px 12px rgba(0,0,0,0.05)'
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+    <div
+      style={{
+        background: '#fff',
+        borderRadius: 12,
+        padding: 20,
+        boxShadow: '0 6px 12px rgba(0,0,0,0.05)'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between'
+        }}
+      >
         <div>
-          <div style={{ fontSize: 13, color: '#666' }}>{title}</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color }}>
+          <div style={{ fontSize: 13, color: '#666' }}>
+            {title}
+          </div>
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color
+            }}
+          >
             {value}
           </div>
         </div>
@@ -287,28 +411,74 @@ function StatCard({
   );
 }
 
-function Th({ children, align = 'left' }: any) {
+function Th({
+  children,
+  align = 'left'
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+}) {
   return (
-    <th style={{
-      textAlign: align,
-      padding: 10,
-      fontSize: 12,
-      color: '#555'
-    }}>
+    <th
+      style={{
+        textAlign: align,
+        padding: 10,
+        fontSize: 12,
+        color: '#555'
+      }}
+    >
       {children}
     </th>
   );
 }
 
-function Td({ children, align = 'left', style = {} }: any) {
+function Td({
+  children,
+  align = 'left',
+  style = {}
+}: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+  style?: React.CSSProperties;
+}) {
   return (
-    <td style={{
-      textAlign: align,
-      padding: 10,
-      fontSize: 13,
-      ...style
-    }}>
+    <td
+      style={{
+        textAlign: align,
+        padding: 10,
+        fontSize: 13,
+        ...style
+      }}
+    >
       {children}
     </td>
   );
 }
+
+/* =========================
+   СТИЛИ КНОПОК
+   ========================= */
+
+const buttonPrimary: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  background: '#4f46e5',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 8,
+  padding: '8px 14px',
+  cursor: 'pointer'
+};
+
+const buttonSecondary: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  background: '#e5e7eb',
+  color: '#111',
+  border: 'none',
+  borderRadius: 8,
+  padding: '8px 14px',
+  cursor: 'pointer'
+};
