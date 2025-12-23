@@ -3,9 +3,9 @@ import { extractFromPdf } from './extractFromPdf';
 import { extractFromTxt } from './extractFromTxt';
 
 // КРИТИЧНО: Настройка worker для production
-// Vercel будет использовать CDN версию
+// Используем unpkg вместо cdnjs (более стабильный)
 pdfjsLib.GlobalWorkerOptions.workerSrc = 
-  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
 
 export async function extractText(file: File): Promise<string> {
   try {
@@ -13,7 +13,7 @@ export async function extractText(file: File): Promise<string> {
     if (file.type !== 'application/pdf' && file.name.endsWith('.txt')) {
       return await extractFromTxt(file);
     }
-
+    
     // PDF → пробуем извлечь текстовый слой
     if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       const pdfText = await extractFromPdf(file);
@@ -26,7 +26,7 @@ export async function extractText(file: File): Promise<string> {
       
       console.warn('⚠ PDF не содержит текстового слоя');
     }
-
+    
     // Если это неизвестный формат
     return '';
     
