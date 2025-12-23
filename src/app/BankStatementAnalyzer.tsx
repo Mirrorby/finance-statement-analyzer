@@ -20,15 +20,43 @@ import {
   clearTransactions
 } from '../storage/db';
 
+/* =========================
+   ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
+   ========================= */
+
+// защита от дублей + объединение
+function mergeTransactions(
+  existing: Transaction[],
+  incoming: Transaction[]
+): Transaction[] {
+  const map = new Map<string, Transaction>();
+
+  [...existing, ...incoming].forEach(t => {
+    const key = [
+      t.date.toISOString(),
+      t.income,
+      t.expense,
+      t.description,
+      t.bank
+    ].join('|');
+
+    map.set(key, t);
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => a.date.getTime() - b.date.getTime()
+  );
+}
+
 export default function BankStatementAnalyzer() {
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [fileNames, setFileNames] = useState<string[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /* =========================
-     ЗАГРУЗКА ДАННЫХ ИЗ IndexedDB ПРИ СТАРТЕ
+     ЗАГРУЗКА ДАННЫХ ИЗ IndexedDB
      ========================= */
   useEffect(() => {
     (async () => {
@@ -39,48 +67,53 @@ export default function BankStatementAnalyzer() {
           setAnalytics(calculateAnalytics(stored.transactions));
         }
       } catch (e) {
-        console.warn('Не удалось загрузить данные из хранилища', e);
+        console.warn('Ошибка загрузки данных из хранилища', e);
       }
     })();
   }, []);
 
   /* =========================
-     ОБРАБОТКА ЗАГРУЗКИ ФАЙЛА
+     ЗАГРУЗКА ФАЙЛОВ (MULTI)
      ========================= */
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
 
-    setFileName(file.name);
     setLoading(true);
     setError(null);
+    setFileNames(files.map(f => f.name));
 
     try {
-      const text = await extractText(file);
-      const parsed = parse(text);
+      let aggregated: Transaction[] = [...transactions];
 
-      if (!parsed.length) {
-        throw new Error(
-          'Не удалось распознать транзакции. Проверь формат выписки.'
-        );
+      for (const file of files) {
+        const text = await extractText(file);
+        const parsed = parse(text);
+
+        if (!parsed.length) {
+          console.warn(`Файл ${file.name} не дал транзакций`);
+          continue;
+        }
+
+        aggregated = mergeTransactions(aggregated, parsed);
       }
 
-      const analyticsResult = calculateAnalytics(parsed);
+      if (!aggregated.length) {
+        throw new Error('Не удалось извлечь транзакции из файлов');
+      }
 
-      setTransactions(parsed);
-      setAnalytics(analyticsResult);
-
-      // 💾 сохраняем в IndexedDB
-      await saveTransactions(parsed);
+      setTransactions(aggregated);
+      setAnalytics(calculateAnalytics(aggregated));
+      await saveTransactions(aggregated);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Ошибка обработки файла');
-      setTransactions([]);
-      setAnalytics(null);
+      setError(err.message || 'Ошибка обработки файлов');
     } finally {
       setLoading(false);
+      // сбрасываем input, чтобы можно было загрузить те же файлы повторно
+      e.target.value = '';
     }
   };
 
@@ -127,34 +160,28 @@ export default function BankStatementAnalyzer() {
   };
 
   /* =========================
-     ОЧИСТКА ДАННЫХ
+     ОЧИСТКА ВСЕХ ДАННЫХ
      ========================= */
   const handleClear = async () => {
     await clearTransactions();
     setTransactions([]);
     setAnalytics(null);
-    setFileName(null);
+    setFileNames([]);
   };
 
   /* =========================
      UI
      ========================= */
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: '#eef2ff',
-        padding: 24
-      }}
-    >
+    <div style={{ minHeight: '100vh', background: '#eef2ff', padding: 24 }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         {/* HEADER */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <h1 style={{ fontSize: 32, fontWeight: 700 }}>
-            Анализатор банковских выписок
+            Агрегатор личных финансов
           </h1>
           <p style={{ color: '#555', marginTop: 8 }}>
-            Загрузите PDF или TXT файл для анализа
+            Загрузите несколько выписок из разных банков
           </p>
           <p style={{ fontSize: 12, color: '#777', marginTop: 4 }}>
             🔒 Все данные обрабатываются локально в браузере
@@ -181,21 +208,19 @@ export default function BankStatementAnalyzer() {
               cursor: 'pointer'
             }}
           >
-            <Upload
-              size={48}
-              style={{ marginBottom: 12, color: '#6366f1' }}
-            />
+            <Upload size={48} style={{ marginBottom: 12, color: '#6366f1' }} />
             <div style={{ fontWeight: 600 }}>
-              {fileName || 'Выберите файл выписки'}
+              {fileNames.length
+                ? `Выбрано файлов: ${fileNames.length}`
+                : 'Выберите файлы выписок'}
             </div>
-            <div
-              style={{ fontSize: 13, color: '#666', marginTop: 6 }}
-            >
-              Поддерживаются PDF и TXT
+            <div style={{ fontSize: 13, color: '#666', marginTop: 6 }}>
+              Можно загрузить несколько PDF / TXT файлов разных банков
             </div>
             <input
               type="file"
               accept=".pdf,.txt"
+              multiple
               onChange={handleFileUpload}
               style={{ display: 'none' }}
             />
@@ -203,7 +228,7 @@ export default function BankStatementAnalyzer() {
 
           {loading && (
             <p style={{ textAlign: 'center', marginTop: 16 }}>
-              ⏳ Обработка выписки…
+              ⏳ Обработка файлов…
             </p>
           )}
 
@@ -254,7 +279,7 @@ export default function BankStatementAnalyzer() {
               icon={<DollarSign />}
             />
             <StatCard
-              title="Категории"
+              title="Категорий"
               value={analytics.categories.length}
               color="#7c3aed"
               icon={<PieChart />}
@@ -285,29 +310,17 @@ export default function BankStatementAnalyzer() {
               </h2>
 
               <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={exportToCSV}
-                  style={buttonPrimary}
-                >
+                <button onClick={exportToCSV} style={buttonPrimary}>
                   <Download size={16} /> CSV
                 </button>
-
-                <button
-                  onClick={handleClear}
-                  style={buttonSecondary}
-                >
+                <button onClick={handleClear} style={buttonSecondary}>
                   <Trash2 size={16} /> Очистить
                 </button>
               </div>
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse'
-                }}
-              >
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#f1f5f9' }}>
                     <Th>Дата</Th>
@@ -320,35 +333,17 @@ export default function BankStatementAnalyzer() {
                 </thead>
                 <tbody>
                   {transactions.map((t, i) => (
-                    <tr
-                      key={i}
-                      style={{
-                        borderBottom:
-                          '1px solid #e5e7eb'
-                      }}
-                    >
+                    <tr key={i} style={{ borderBottom: '1px solid #e5e7eb' }}>
                       <Td>{t.date.toLocaleString()}</Td>
                       <Td>{t.category}</Td>
                       <Td>{t.description}</Td>
-                      <Td
-                        align="right"
-                        style={{ color: '#16a34a' }}
-                      >
-                        {t.income
-                          ? `+${t.income.toFixed(2)}`
-                          : '—'}
+                      <Td align="right" style={{ color: '#16a34a' }}>
+                        {t.income ? `+${t.income.toFixed(2)}` : '—'}
                       </Td>
-                      <Td
-                        align="right"
-                        style={{ color: '#dc2626' }}
-                      >
-                        {t.expense
-                          ? `-${t.expense.toFixed(2)}`
-                          : '—'}
+                      <Td align="right" style={{ color: '#dc2626' }}>
+                        {t.expense ? `-${t.expense.toFixed(2)}` : '—'}
                       </Td>
-                      <Td align="right">
-                        {t.balance.toFixed(2)}
-                      </Td>
+                      <Td align="right">{t.balance.toFixed(2)}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -362,7 +357,7 @@ export default function BankStatementAnalyzer() {
 }
 
 /* =========================
-   ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ
+   МЕЛКИЕ КОМПОНЕНТЫ
    ========================= */
 
 function StatCard({
@@ -385,25 +380,10 @@ function StatCard({
         boxShadow: '0 6px 12px rgba(0,0,0,0.05)'
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between'
-        }}
-      >
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 13, color: '#666' }}>
-            {title}
-          </div>
-          <div
-            style={{
-              fontSize: 22,
-              fontWeight: 700,
-              color
-            }}
-          >
-            {value}
-          </div>
+          <div style={{ fontSize: 13, color: '#666' }}>{title}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
         </div>
         <div style={{ color }}>{icon}</div>
       </div>
@@ -419,14 +399,7 @@ function Th({
   align?: 'left' | 'right';
 }) {
   return (
-    <th
-      style={{
-        textAlign: align,
-        padding: 10,
-        fontSize: 12,
-        color: '#555'
-      }}
-    >
+    <th style={{ textAlign: align, padding: 10, fontSize: 12, color: '#555' }}>
       {children}
     </th>
   );
@@ -442,22 +415,11 @@ function Td({
   style?: React.CSSProperties;
 }) {
   return (
-    <td
-      style={{
-        textAlign: align,
-        padding: 10,
-        fontSize: 13,
-        ...style
-      }}
-    >
+    <td style={{ textAlign: align, padding: 10, fontSize: 13, ...style }}>
       {children}
     </td>
   );
 }
-
-/* =========================
-   СТИЛИ КНОПОК
-   ========================= */
 
 const buttonPrimary: React.CSSProperties = {
   display: 'flex',
