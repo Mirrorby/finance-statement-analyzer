@@ -5,20 +5,25 @@ import { extractFromPdf } from './extractFromPdf';
 import { extractFromTxt } from './extractFromTxt';
 import { ocrFallback } from '../ocr/ocrFallback';
 
-// 🔧 КРИТИЧНО: явная инициализация worker для Vite / Vercel
+// Инициализация worker (обязательно)
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export async function extractText(file: File): Promise<string> {
-  if (file.type === 'application/pdf') {
-    const text = await extractFromPdf(file);
-
-    // fallback на OCR только если PDF без текстового слоя
-    if (text.trim().length < 300) {
-      return await ocrFallback(file);
-    }
-
-    return text;
+  // TXT
+  if (file.type !== 'application/pdf') {
+    return extractFromTxt(file);
   }
 
-  return extractFromTxt(file);
+  // PDF → text layer
+  const pdfText = await extractFromPdf(file);
+
+  // ⚠️ ВАЖНО:
+  // НЕ проверяем длину текста
+  // возвращаем как есть
+  if (pdfText && pdfText.trim().length > 0) {
+    return pdfText;
+  }
+
+  // fallback → OCR
+  return await ocrFallback(file);
 }
