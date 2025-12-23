@@ -20,6 +20,8 @@ import {
   clearTransactions
 } from '../storage/db';
 
+import { ocrFallback } from '../ocr/ocrFallback';
+
 /* =========================
    ВСПОМОГАТЕЛЬНАЯ ЛОГИКА
    ========================= */
