@@ -13,7 +13,8 @@
     "react-dom": "^18.2.0",
     "pdfjs-dist": "^4.0.379",
     "tesseract.js": "^5.0.4",
-    "lucide-react": "^0.292.0"
+    "lucide-react": "^0.292.0",
+    "localforage": "^1.10.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",
