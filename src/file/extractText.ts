@@ -2,7 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { extractFromPdf } from './extractFromPdf';
 import { extractFromTxt } from './extractFromTxt';
 
-// КРИТИЧНО: Используем локальный worker из папки public
+// Используем локальный worker из папки public
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 export async function extractText(file: File): Promise<string> {
@@ -33,3 +33,12 @@ export async function extractText(file: File): Promise<string> {
     throw new Error(`Не удалось обработать файл ${file.name}`);
   }
 }
+```
+
+---
+
+### 3. Исправить `.gitignore` (если нужно)
+
+**В файле `.gitignore` добавьте строку:**
+```
+!public/pdf.worker.min.mjs
